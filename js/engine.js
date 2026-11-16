@@ -87,6 +87,8 @@ export function judgeRule (r, res) {
     const strOk = !r.ma.length || r.ma.some(hit)
     if (codesOk && strOk) return 'missing'
   }
+  // A "not found"/"gone" page is never an account, unless this check expects exactly that code
+  if ((st === 404 || st === 410) && !(rule.fc || []).some(c => Number(c) === st)) return 'missing'
   const fcOk = rule.fc ? codeMatch(rule.fc, st) : (st >= 200 && st < 300)
   const faOk = r.fa.every(hit)
   const fyOk = !r.fy.length || r.fy.some(hit)

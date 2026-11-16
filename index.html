@@ -61,6 +61,7 @@
       </div>
 
       <div class="exports">
+        <button id="expMd">Download Output.markdown</button>
         <button class="secondary" id="expJson">Download JSON</button>
         <button class="secondary" id="expCsv">Download CSV</button>
         <button class="secondary" id="expReport">Printable report</button>
@@ -75,6 +76,12 @@
         <button type="button" id="saveWorker" class="secondary">Save &amp; test</button>
       </div>
       <p class="hint" id="workerStatus"></p>
+      <label for="dailyCap" style="margin-top:14px">Daily safety cap (Worker calls from this browser)</label>
+      <input id="dailyCap" type="number" min="1000" max="60000" step="1000">
+      <p class="hint">Scans from this browser stop when this is reached.</p>
+      <p class="hint" id="hardCap"></p>
+      <p class="hint" id="junkInfo"></p>
+      <button type="button" id="forgetJunk" class="secondary" hidden>Check skipped sites again</button>
       <p class="hint" id="usage"></p>
     </details>
 

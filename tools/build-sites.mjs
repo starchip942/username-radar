@@ -35,8 +35,12 @@ const sites = new Map() // key -> site
 function keyOf (url) {
   return url.toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/^www\./, '').replace(/[/?#]+$/, '')
 }
-function add (src, name, url, rule, cats, nsfw) {
+// Russian sites (.ru / .su / .рф) are left out on purpose
+const RUSSIAN = /\.(ru|su|xn--p1ai|рф)$/i
+function hostOf (url) { try { return new URL(url.split('{u}').join('x')).hostname } catch { return '' } }
+function add (src, name, url, rule, cats, nsfw, rank) {
   if (!url || !url.includes('{u}') || !/^https?:\/\//i.test(url)) return false
+  if (RUSSIAN.test(hostOf(url)) || (rule.p && RUSSIAN.test(hostOf(rule.p)))) return false
   const k = keyOf(url)
   let s = sites.get(k)
   if (!s) { s = { n: name, u: url, c: [], x: 0, s: [], r: [] }; sites.set(k, s) }
@@ -48,6 +52,7 @@ function add (src, name, url, rule, cats, nsfw) {
   if (!s.s.includes(src)) s.s.push(src)
   for (const c of arr(cats)) { const t = String(c).toLowerCase().trim(); if (t && !s.c.includes(t)) s.c.push(t) }
   if (nsfw) s.x = 1
+  if (rank > 0 && (!s.rank || rank < s.rank)) s.rank = rank
   return true
 }
 const counts = {}
@@ -127,7 +132,7 @@ const bump = (k, ok) => { counts[k] = counts[k] || { read: 0, used: 0 }; counts[
     } else if (e.checkType === 'response_url') {
       rule.rd = 1; rule.mc = ['!2']
     } else { bump('maigret', false); continue }
-    bump('maigret', add('maigret', name, url, rule, tags.filter(t => t.length > 2), nsfw))
+    bump('maigret', add('maigret', name, url, rule, tags.filter(t => t.length > 2), nsfw, Number(e.alexaRank) || 0))
   }
 }
 
@@ -150,12 +155,18 @@ const bump = (k, ok) => { counts[k] = counts[k] || { read: 0, used: 0 }; counts[
     const host = (() => { try { return new URL(url.replace('{u}', 'x')).hostname.replace(/^www\./, '') } catch { return '' } })()
     const cat = (e.type || '').split('>').map(x => x.trim()).filter(Boolean).slice(-1)
     const nsfw = e.nsfw === 'true'
-    bump('social-analyzer', add('social-analyzer', host, url, rule, nsfw ? ['adult', ...cat] : cat, nsfw))
+    bump('social-analyzer', add('social-analyzer', host, url, rule, nsfw ? ['adult', ...cat] : cat, nsfw, Number(e.global_rank) || 0))
   }
 }
 
+// "Important" sites are never hidden for being unreliable: popular (top 10,000 by
+// traffic rank), in the hand-picked Sherlock/WhatsMyName lists, or known to 2+ tools.
+for (const s of sites.values()) {
+  if (s.s.includes('sherlock') || s.s.includes('whatsmyname') || s.s.length > 1 || (s.rank && s.rank <= 10000)) s.i = 1
+  delete s.rank
+}
 const list = [...sites.values()].sort((a, b) => a.n.localeCompare(b.n, 'en', { sensitivity: 'base' }))
 const out = { built: new Date().toISOString(), counts, total: list.length, sites: list }
 fs.writeFileSync(outPath, JSON.stringify(out))
 console.log(JSON.stringify(counts), 'total sites:', list.length, 'rules:', list.reduce((n, s) => n + s.r.length, 0),
-  'multi-source:', list.filter(s => s.s.length > 1).length, 'size:', (fs.statSync(outPath).size / 1e6).toFixed(2) + 'MB')
+  'multi-source:', list.filter(s => s.s.length > 1).length, 'important:', list.filter(s => s.i).length, 'size:', (fs.statSync(outPath).size / 1e6).toFixed(2) + 'MB')
