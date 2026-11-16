@@ -12,7 +12,6 @@
   <main>
     <header>
       <h1>Username Radar</h1>
-      <p class="sub" id="siteCount">Loading site list…</p>
     </header>
 
     <section class="card">
@@ -24,13 +23,7 @@
           <button type="submit" id="scanBtn">Scan</button>
           <button type="button" id="stopBtn" class="secondary" hidden>Stop</button>
         </div>
-        <div class="options">
-          <label><input type="checkbox" id="optVariations"> Also try spelling variations</label>
-          <label><input type="checkbox" id="optAdult"> Skip adult sites</label>
-          <label><input type="checkbox" id="optDouble" checked> Double-check hits with a fake name</label>
-        </div>
-        <div id="variationBox" class="variations" hidden></div>
-        <p class="estimate" id="estimate"></p>
+
       </form>
     </section>
 
@@ -67,23 +60,6 @@
         <button class="secondary" id="expReport">Printable report</button>
       </div>
     </section>
-
-    <details class="card" id="settings">
-      <summary>Settings</summary>
-      <label for="workerUrl">Worker address</label>
-      <div class="row">
-        <input id="workerUrl" autocomplete="off" spellcheck="false" placeholder="https://username-radar.yourname.workers.dev">
-        <button type="button" id="saveWorker" class="secondary">Save &amp; test</button>
-      </div>
-      <p class="hint" id="workerStatus"></p>
-      <label for="dailyCap" style="margin-top:14px">Daily safety cap (Worker calls from this browser)</label>
-      <input id="dailyCap" type="number" min="1000" max="60000" step="1000">
-      <p class="hint">Scans from this browser stop when this is reached.</p>
-      <p class="hint" id="hardCap"></p>
-      <p class="hint" id="junkInfo"></p>
-      <button type="button" id="forgetJunk" class="secondary" hidden>Check skipped sites again</button>
-      <p class="hint" id="usage"></p>
-    </details>
 
     <footer>
       Site lists from

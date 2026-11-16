@@ -1,11 +1,10 @@
 import {
-  buildRequests, judgeCheck, judgeRule, fakeUsername, variations,
+  buildRequests, judgeCheck, judgeRule, fakeUsername,
   buildLinkIndex, findLinkedAccounts, VERDICTS
 } from './engine.js'
 
-const DEFAULT_WORKER = 'https://username-radar.metesahin10.workers.dev'
+const WORKER = 'https://username-radar.metesahin10.workers.dev'
 const PARALLEL = 12 // batches running at the same time
-const DEFAULT_CAP = 60000 // per-browser cap; the Worker also enforces a hard 60,000/day cap for everyone
 let BATCH = 8 // updated from the worker (version 2 takes 20 links per call)
 const PAGE = 200
 
@@ -14,60 +13,30 @@ const state = {
   sites: [], built: '', linkIndex: null,
   results: [], // { username, site, verdict, answers, note, info }
   linked: [],
-  tab: 'found', shown: PAGE, running: false, stop: false, junk: new Set(), junkHidden: 0
+  tab: 'found', shown: PAGE, running: false, stop: false, junk: new Map(), junkHidden: 0
 }
 
-// ---------- settings & usage ----------
-const workerUrl = () => (localStorage.getItem('workerUrl') || DEFAULT_WORKER).replace(/\/+$/, '')
-function usageToday () {
-  const today = new Date().toISOString().slice(0, 10)
-  let u = {}
-  try { u = JSON.parse(localStorage.getItem('usage') || '{}') } catch {}
-  if (u.day !== today) u = { day: today, calls: 0 }
-  return u
-}
-const dailyCap = () => Number(localStorage.getItem('dailyCap')) || DEFAULT_CAP
-function addUsage (n) {
-  const u = usageToday(); u.calls += n
-  try { localStorage.setItem('usage', JSON.stringify(u)) } catch {}
-  $('usage').textContent = `Worker calls today from this browser: ${u.calls.toLocaleString()} (this browser's own cap ${dailyCap().toLocaleString()}; resets 03:00 Turkey time).`
-}
-function capError () {
-  return Object.assign(new Error('cap'), { fatal: true, cap: true })
-}
-
+// ---------- worker check ----------
 async function testWorker () {
-  $('workerStatus').textContent = 'Testing…'
   try {
-    const r = await fetch(workerUrl())
+    const r = await fetch(WORKER)
     const info = await r.json().catch(() => ({}))
-    if (info.capError) throw new Error('the usage counter database is not connected to the Worker yet')
-    if (!r.ok) throw new Error('HTTP ' + r.status)
-    if (info.used !== undefined) {
-      $('hardCap').textContent = `Whole site today: ${info.used.toLocaleString()} of ${info.cap.toLocaleString()} calls (hard cap = 60% of Cloudflare's free 100,000, so your other Workers keep 40%).`
-    }
+    if (info.capError || !r.ok) throw new Error('unavailable')
     BATCH = Math.max(1, Math.min(info.maxBatch || 8, 20))
-    $('workerStatus').textContent = BATCH >= 20
-      ? 'Worker is working ✓'
-      : 'Worker is working ✓ (old version: paste the new Worker code into Cloudflare to use about 60% fewer calls)'
-    updateEstimate()
     return true
   } catch (e) {
-    $('workerStatus').textContent = 'Worker not reachable: ' + e.message
     return false
   }
 }
 
 // ---------- talking to the worker ----------
 async function sendBatch (batch) {
-  if (usageToday().calls >= dailyCap()) throw capError()
   const items = batch.map(q => ({
     url: q.url, method: q.method, body: q.body, headers: q.headers, noRedirect: q.noRedirect,
     strings: q.strings, lowerStrings: q.lowerStrings, info: q.info
   }))
   try {
-    const r = await fetch(workerUrl(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) })
-    addUsage(1)
+    const r = await fetch(WORKER, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) })
     if (r.status === 403) throw Object.assign(new Error('origin'), { fatal: true })
     if (r.status === 429 || r.status === 503) throw Object.assign(new Error('hard cap'), { fatal: true, hard: true, status: r.status })
     if (!r.ok) throw new Error('HTTP ' + r.status)
@@ -104,14 +73,20 @@ async function runRequests (requests, responses, onProgress) {
   if (fatal) throw fatal
 }
 
-// Unreliable small sites remembered in this browser and skipped next time
-function loadJunk () { try { return new Set(JSON.parse(localStorage.getItem('junkSites') || '[]')) } catch { return new Set() } }
-function saveJunk () {
-  try { localStorage.setItem('junkSites', JSON.stringify([...state.junk])) } catch {}
-  $('junkInfo').textContent = `${state.junk.size.toLocaleString()} unreliable small sites are skipped (they showed accounts that don't exist).`
-  $('forgetJunk').hidden = !state.junk.size
+// Unreliable small sites remembered in this browser and skipped for 7 days
+const JUNK_DAYS = 7
+function loadJunk () {
+  let raw = {}
+  try { raw = JSON.parse(localStorage.getItem('junkSites2') || '{}') } catch {}
+  const now = Date.now()
+  const m = new Map()
+  for (const [u, t] of Object.entries(raw)) if (now - t < JUNK_DAYS * 864e5) m.set(u, t)
+  return m
 }
-function markJunk (site) { if (!site.i) { state.junk.add(site.u); return true } return false }
+function saveJunk () {
+  try { localStorage.setItem('junkSites2', JSON.stringify(Object.fromEntries(state.junk))) } catch {}
+}
+function markJunk (site) { if (!site.i) { state.junk.set(site.u, Date.now()); return true } return false }
 
 const needsRetry = r => !r || r.e || r.s === 429 || r.s >= 500
 
@@ -209,38 +184,7 @@ async function scanUsername (username, opts, report) {
 
 // ---------- UI ----------
 function selectedUsernames () {
-  const base = $('usernames').value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean)
-  const list = [...new Set(base)]
-  if ($('optVariations').checked) {
-    for (const el of $('variationBox').querySelectorAll('input:checked')) if (!list.includes(el.value)) list.push(el.value)
-  }
-  return list
-}
-
-function updateVariations () {
-  const box = $('variationBox')
-  if (!$('optVariations').checked) { box.hidden = true; updateEstimate(); return }
-  const base = $('usernames').value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean)
-  const vars = [...new Set(base.flatMap(variations))].filter(v => !base.includes(v))
-  box.innerHTML = ''
-  for (const v of vars) {
-    const l = document.createElement('label')
-    l.innerHTML = '<input type="checkbox" checked>'
-    l.firstChild.value = v
-    l.append(' ' + v)
-    l.firstChild.addEventListener('change', updateEstimate)
-    box.append(l)
-  }
-  box.hidden = vars.length === 0
-  updateEstimate()
-}
-
-function updateEstimate () {
-  const n = selectedUsernames().length
-  if (!n || !state.sites.length) { $('estimate').textContent = ''; return }
-  const sites = $('optAdult').checked ? state.sites.filter(s => !s.x).length : state.sites.length
-  const calls = Math.ceil(sites * 1.15 / BATCH) * n
-  $('estimate').textContent = `${n} username${n > 1 ? 's' : ''} × ${sites.toLocaleString()} sites ≈ ${calls.toLocaleString()} Worker calls.`
+  return [...new Set($('usernames').value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean))]
 }
 
 let renderTimer = 0
@@ -283,7 +227,7 @@ function render () {
     const name = document.createElement('div'); name.className = 'name'; name.textContent = `${l.site}: ${l.username}`
     const btn = document.createElement('button'); btn.className = 'secondary small-btn'; btn.textContent = 'Scan this name'
     btn.disabled = state.running
-    btn.onclick = () => { $('usernames').value = l.username; updateVariations(); $('scanForm').requestSubmit() }
+    btn.onclick = () => { $('usernames').value = l.username; $('scanForm').requestSubmit() }
     name.append(btn)
     const a = document.createElement('a'); a.href = l.link; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = l.link
     const meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = 'seen on ' + l.from
@@ -379,11 +323,15 @@ async function startScan (e) {
   if (state.running) return
   const names = selectedUsernames()
   if (!names.length) return
-  if (!(await testWorker())) { $('settings').open = true; return }
+  if (!(await testWorker())) {
+    $('progressCard').hidden = false
+    $('status').textContent = 'The scanner is not reachable right now. Try again in a minute.'
+    return
+  }
   state.running = true; state.stop = false
   state.results = []; state.linked = []; state.shown = PAGE; state.tab = 'found'; state.junkHidden = 0
   $('scanBtn').disabled = true; $('stopBtn').hidden = false; $('progressCard').hidden = false
-  const opts = { skipAdult: $('optAdult').checked, doubleCheck: $('optDouble').checked }
+  const opts = { skipAdult: false, doubleCheck: true }
   const started = Date.now()
   try {
     for (let i = 0; i < names.length && !state.stop; i++) {
@@ -404,7 +352,7 @@ async function startScan (e) {
     $('status').textContent = (state.stop ? 'Stopped. ' : 'Done. ') + `${found} found, ${state.results.filter(r => r.verdict === 'possible').length} possible · ${secs}s` +
       (state.junkHidden ? ` · ${state.junkHidden} fake hits from unreliable sites hidden` : '')
   } catch (err) {
-    $('status').textContent = err.hard ? (err.status === 503 ? 'Stopped: the Worker’s usage counter isn’t connected (see Settings).' : 'Stopped: the site reached its hard daily cap of 60,000 Worker calls. It resets at 03:00 Turkey time. Your TikTok Worker is unaffected.') : err.cap ? `Stopped: this browser reached today’s safety cap of ${dailyCap().toLocaleString()} Worker calls. You can change it in Settings.` : err.fatal ? 'The Worker refused this website. Add this site’s address to ALLOWED_ORIGINS in the Worker.' : 'Something went wrong: ' + err.message
+    $('status').textContent = err.hard ? (err.status === 503 ? 'The scanner is not available right now.' : 'Daily scan limit reached. It resets at 03:00 Turkey time.') : err.fatal ? 'The scanner refused this request.' : 'Something went wrong: ' + err.message
   } finally {
     state.running = false
     $('scanBtn').disabled = false; $('stopBtn').hidden = true
@@ -413,18 +361,13 @@ async function startScan (e) {
 }
 
 async function init () {
-  $('workerUrl').value = workerUrl()
-  $('dailyCap').value = dailyCap()
-  state.junk = loadJunk(); saveJunk()
-  addUsage(0)
-  testWorker()
+  state.junk = loadJunk()
   try {
     const r = await fetch('sites.json')
     const data = await r.json()
     state.sites = data.sites
     state.built = data.built
     state.linkIndex = buildLinkIndex(state.sites)
-    $('siteCount').textContent = `Checks ${state.sites.length.toLocaleString()} websites — the combined lists of Sherlock, Maigret, WhatsMyName and Social Analyzer.`
     $('builtAt').textContent = ` List updated ${new Date(data.built).toLocaleDateString()}.`
     const cats = new Map()
     for (const s of state.sites) for (const c of s.c) cats.set(c, (cats.get(c) || 0) + 1)
@@ -432,26 +375,17 @@ async function init () {
       const o = document.createElement('option'); o.value = c; o.textContent = c; $('filterCat').append(o)
     }
   } catch (e) {
-    $('siteCount').textContent = 'Could not load the site list: ' + e.message
+    $('progressCard').hidden = false
+    $('status').textContent = 'Could not load the site list: ' + e.message
   }
-  updateEstimate()
 }
 
 $('scanForm').addEventListener('submit', startScan)
 $('stopBtn').addEventListener('click', () => { state.stop = true; $('status').textContent = 'Stopping…' })
-$('usernames').addEventListener('input', updateVariations)
-$('optVariations').addEventListener('change', updateVariations)
-$('optAdult').addEventListener('change', updateEstimate)
 $('tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.tab = b.dataset.tab; state.shown = PAGE; render() } })
 $('filterText').addEventListener('input', () => { state.shown = PAGE; scheduleRender() })
 $('filterCat').addEventListener('change', () => { state.shown = PAGE; render() })
 $('moreBtn').addEventListener('click', () => { state.shown += PAGE; render() })
-$('saveWorker').addEventListener('click', () => { localStorage.setItem('workerUrl', $('workerUrl').value.trim() || DEFAULT_WORKER); testWorker() })
-$('dailyCap').addEventListener('change', () => {
-  const v = Math.max(1000, Math.min(60000, Number($('dailyCap').value) || DEFAULT_CAP))
-  $('dailyCap').value = v; localStorage.setItem('dailyCap', String(v)); addUsage(0)
-})
-$('forgetJunk').addEventListener('click', () => { state.junk.clear(); saveJunk() })
 $('expMd').addEventListener('click', exportMd)
 $('expJson').addEventListener('click', exportJson)
 $('expCsv').addEventListener('click', exportCsv)
