@@ -206,12 +206,8 @@ function render () {
     unknown: 'The site blocked the check, timed out or was down.'
   }
   $('tabHint').textContent = hints[state.tab]
-  const text = $('filterText').value.trim().toLowerCase()
-  const cat = $('filterCat').value
   const multi = new Set(state.results.map(r => r.username)).size > 1
-  const list = state.results.filter(r => r.verdict === state.tab &&
-    (!text || r.site.n.toLowerCase().includes(text) || r.site.u.toLowerCase().includes(text)) &&
-    (!cat || r.site.c.includes(cat)))
+  const list = state.results.filter(r => r.verdict === state.tab)
   const ul = $('results')
   ul.innerHTML = ''
   for (const r of list.slice(0, state.shown)) ul.append(resultItem(r, multi))
@@ -276,16 +272,6 @@ function download (name, text, type) {
   a.download = name; a.click()
   setTimeout(() => URL.revokeObjectURL(a.href), 5000)
 }
-const fileBase = () => 'username-radar-' + [...new Set(state.results.map(r => r.username))].slice(0, 3).join('_').replace(/[^\w.-]+/g, '') + '-' + new Date().toISOString().slice(0, 10)
-function exportJson () {
-  download(fileBase() + '.json', JSON.stringify({ scanned: new Date().toISOString(), results: rows(), linked: state.linked }, null, 2), 'application/json')
-}
-function exportCsv () {
-  const r = rows()
-  const cols = Object.keys(r[0] || { username: '' })
-  const esc = v => '"' + String(v).replace(/"/g, '""') + '"'
-  download(fileBase() + '.csv', [cols.join(','), ...r.map(x => cols.map(c => esc(x[c])).join(','))].join('\n'), 'text/csv')
-}
 // Markdown download (Output.markdown): same plain lines as a .txt (bare links, no extra formatting) so it stays just as small
 function exportMd () {
   const names = [...new Set(state.results.map(r => r.username))]
@@ -301,22 +287,6 @@ function exportMd () {
   }
   download('Output.markdown', lines.join('\n') + '\n', 'text/markdown')
 }
-function exportReport () {
-  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-  const r = rows().filter(x => x.result === 'found' || x.result === 'possible')
-  const names = [...new Set(state.results.map(x => x.username))]
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Username Radar report</title>
-<style>body{font:14px/1.45 system-ui,sans-serif;margin:32px;color:#111}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ddd;padding:6px;text-align:left;vertical-align:top}th{background:#f3f3f3}a{color:#2f5d50;word-break:break-all}.p{color:#a46a00}</style></head><body>
-<h1>Username Radar report</h1><p>Usernames: ${esc(names.join(', '))}<br>Date: ${esc(new Date().toLocaleString())}<br>
-Sites checked: ${state.results.length.toLocaleString()} · Found: ${r.filter(x => x.result === 'found').length} · Possible: ${r.filter(x => x.result === 'possible').length}</p>
-<table><tr><th>Site</th><th>Username</th><th>Result</th><th>Link / details</th></tr>
-${r.map(x => `<tr><td>${esc(x.site)}</td><td>${esc(x.username)}</td><td class="${x.result === 'possible' ? 'p' : ''}">${esc(x.result)}</td><td><a href="${esc(x.url)}">${esc(x.url)}</a><br>${esc([x.title, x.description].filter(Boolean).join(' — '))}${x.note ? '<br><i>' + esc(x.note) + '</i>' : ''}</td></tr>`).join('')}
-</table>${state.linked.length ? `<h2>Linked accounts</h2><ul>${state.linked.map(l => `<li>${esc(l.site)}: ${esc(l.username)} — <a href="${esc(l.link)}">${esc(l.link)}</a> (seen on ${esc(l.from)})</li>`).join('')}</ul>` : ''}
-<script>setTimeout(()=>print(),400)<\/script></body></html>`
-  const w = window.open('', '_blank')
-  if (w) { w.document.write(html); w.document.close() } else download(fileBase() + '.html', html, 'text/html')
-}
-
 // ---------- start ----------
 async function startScan (e) {
   e.preventDefault()
@@ -333,6 +303,19 @@ async function startScan (e) {
   $('scanBtn').disabled = true; $('stopBtn').hidden = false; $('progressCard').hidden = false
   const opts = { skipAdult: false, doubleCheck: true }
   const started = Date.now()
+  state.progress = 0
+  $('eta').textContent = 'Starting…'
+  // Approximate time left, updated every second
+  const etaTimer = setInterval(() => {
+    const f = state.progress
+    const secs = (Date.now() - started) / 1000
+    let text = Math.floor(f * 100) + '%'
+    if (f > 0.03 && f < 1) {
+      const left = Math.max(5, Math.round(secs * (1 - f) / f))
+      text += ' · about ' + (left >= 90 ? Math.round(left / 60) + ' min' : (left < 60 ? Math.ceil(left / 5) * 5 + ' sec' : '1 min')) + ' left'
+    } else if (f <= 0.03) text += ' · estimating time…'
+    $('eta').textContent = text
+  }, 1000)
   try {
     for (let i = 0; i < names.length && !state.stop; i++) {
       const prefix = names.length > 1 ? `[${i + 1}/${names.length}] ` : ''
@@ -340,7 +323,8 @@ async function startScan (e) {
       await scanUsername(names[i], opts, (msg, frac) => {
         if (state.stop) return
         if (msg) label = msg
-        $('bar').style.width = (((i + frac) / names.length) * 100).toFixed(1) + '%'
+        state.progress = (i + frac) / names.length
+        $('bar').style.width = (state.progress * 100).toFixed(1) + '%'
         $('status').textContent = prefix + label
         scheduleRender()
       })
@@ -354,6 +338,8 @@ async function startScan (e) {
   } catch (err) {
     $('status').textContent = err.hard ? (err.status === 503 ? 'The scanner is not available right now.' : 'Daily scan limit reached. It resets at 03:00 Turkey time.') : err.fatal ? 'The scanner refused this request.' : 'Something went wrong: ' + err.message
   } finally {
+    clearInterval(etaTimer)
+    $('eta').textContent = ''
     state.running = false
     $('scanBtn').disabled = false; $('stopBtn').hidden = true
     render()
@@ -369,11 +355,6 @@ async function init () {
     state.built = data.built
     state.linkIndex = buildLinkIndex(state.sites)
     $('builtAt').textContent = ` List updated ${new Date(data.built).toLocaleDateString()}.`
-    const cats = new Map()
-    for (const s of state.sites) for (const c of s.c) cats.set(c, (cats.get(c) || 0) + 1)
-    for (const [c] of [...cats].filter(([, n]) => n >= 10).sort((a, b) => a[0].localeCompare(b[0]))) {
-      const o = document.createElement('option'); o.value = c; o.textContent = c; $('filterCat').append(o)
-    }
   } catch (e) {
     $('progressCard').hidden = false
     $('status').textContent = 'Could not load the site list: ' + e.message
@@ -383,11 +364,6 @@ async function init () {
 $('scanForm').addEventListener('submit', startScan)
 $('stopBtn').addEventListener('click', () => { state.stop = true; $('status').textContent = 'Stopping…' })
 $('tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.tab = b.dataset.tab; state.shown = PAGE; render() } })
-$('filterText').addEventListener('input', () => { state.shown = PAGE; scheduleRender() })
-$('filterCat').addEventListener('change', () => { state.shown = PAGE; render() })
 $('moreBtn').addEventListener('click', () => { state.shown += PAGE; render() })
 $('expMd').addEventListener('click', exportMd)
-$('expJson').addEventListener('click', exportJson)
-$('expCsv').addEventListener('click', exportCsv)
-$('expReport').addEventListener('click', exportReport)
 init()

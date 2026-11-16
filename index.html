@@ -28,6 +28,7 @@
     </section>
 
     <section class="card" id="progressCard" hidden>
+      <p class="eta" id="eta"></p>
       <div class="progress"><div id="bar"></div></div>
       <p id="status" class="status"></p>
     </section>
@@ -38,10 +39,6 @@
         <button data-tab="possible">Possible <span>0</span></button>
         <button data-tab="missing">Not found <span>0</span></button>
         <button data-tab="unknown">Couldn't check <span>0</span></button>
-      </div>
-      <div class="filters">
-        <input id="filterText" placeholder="Filter by site name" autocomplete="off">
-        <select id="filterCat"><option value="">All categories</option></select>
       </div>
       <p class="hint" id="tabHint"></p>
       <ul id="results" class="results"></ul>
@@ -55,9 +52,6 @@
 
       <div class="exports">
         <button id="expMd">Download Output.markdown</button>
-        <button class="secondary" id="expJson">Download JSON</button>
-        <button class="secondary" id="expCsv">Download CSV</button>
-        <button class="secondary" id="expReport">Printable report</button>
       </div>
     </section>
 

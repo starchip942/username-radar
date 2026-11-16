@@ -15,8 +15,8 @@ The site list is a combined, de-duplicated rule set from four open-source tools:
 - Reads the matching profile pages and shows the title, description and picture.
 - Finds linked accounts: links to other known sites on found profiles, with a "Scan this name" button for each one.
 - Accepts several usernames at once (comma separated).
-- Filters results by site name or by category.
-- Downloads results as "Output.markdown" (a simple list of found, possible and linked results), as JSON or CSV, or opens a printable report.
+- Downloads results as "Output.markdown" (a simple list of found, possible and linked results).
+- Shows a progress bar with the percentage and roughly how much time is left.
 - The Worker keeps the daily count of calls in its D1 database.
 
 ## How it works
